@@ -1,0 +1,14 @@
+.pio/
+server/tracker.db
+__pycache__/
+*.pyc
+.venv/
+
+# Find My device keys — private key material, never commit
+findmy/keys/
+*.keys
+
+# Local secrets (WiFi credentials, API token) — commit the .example versions only
+firmware-listener/include/config.h
+server/start-server.bat
+server/start-listener.bat

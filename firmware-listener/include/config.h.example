@@ -1,0 +1,25 @@
+#pragma once
+
+// One listener node per zone you care about (home, garage, office...).
+// Each cycles: BLE scan -> POST sightings over WiFi -> repeat.
+
+#define LISTENER_ID   "home"          // where THIS ESP32 sits (the tag names live in server/tags.json)
+
+// >>> The only two lines you need to edit: your WiFi network's name and password <<<
+#define WIFI_SSID     "your-wifi-name"
+#define WIFI_PASS     "your-wifi-password"
+
+// Your PC's address on your network (found via ipconfig) + the shared secret.
+// Already filled in — must match start-server.bat.
+#define SERVER_URL    "http://YOUR-SERVER-IP:8000/api/sighting"
+#define API_TOKEN     "paste-a-long-random-token-here"
+
+// This listener's fixed position (map pin for tags it hears). Optional:
+// leave commented out and the dashboard just shows the zone name ("at home").
+// To get a map pin, grab your house's coordinates from Google Maps
+// (right-click your roof -> the numbers) and uncomment:
+// #define LISTENER_LAT  37.7749
+// #define LISTENER_LON  -122.4194
+
+#define SCAN_SECONDS  8    // BLE scan window per cycle
+#define CYCLE_SECONDS 15   // total cycle length (scan + report + idle)

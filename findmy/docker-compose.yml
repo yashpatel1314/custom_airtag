@@ -1,0 +1,33 @@
+# Self-hosted Find My backend (Macless-Haystack).
+# Two containers: an Anisette server (mimics Apple device auth) and the
+# macless-haystack endpoint that fetches your tags' encrypted location
+# reports from Apple and serves them to the web UI.
+#
+# First run must be interactive to log in with your Apple ID (2FA via SMS):
+#   docker compose run --rm -it endpoint
+# then afterwards:
+#   docker compose up -d
+services:
+  anisette:
+    image: dadoum/anisette-v3-server
+    container_name: anisette
+    restart: always
+    ports:
+      - "6969:6969"
+    volumes:
+      - anisette-v3_data:/home/Alcoholic/.config/anisette-v3
+
+  endpoint:
+    image: christld/macless-haystack
+    container_name: macless-haystack
+    restart: unless-stopped
+    ports:
+      - "6176:6176"
+    volumes:
+      - mh_data:/app/endpoint/data
+    depends_on:
+      - anisette
+
+volumes:
+  anisette-v3_data:
+  mh_data:

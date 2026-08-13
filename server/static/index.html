@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e;
+    --muted: #898781; --hairline: #e1e0d9; --ring: rgba(11,11,11,0.10);
+    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+      --muted: #898781; --hairline: #2c2c2a; --ring: rgba(255,255,255,0.10);
+    }
+    .leaflet-layer, .leaflet-control-zoom, .leaflet-control-attribution {
+      filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page); color: var(--ink); height: 100vh; display: flex;
+  }
+  #sidebar {
+    width: 320px; min-width: 320px; padding: 16px; overflow-y: auto;
+    border-right: 1px solid var(--hairline); display: flex;
+    flex-direction: column; gap: 12px;
+  }
+  #map { flex: 1; background: var(--surface); }
+  h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .filters { display: flex; gap: 6px; }
+  .filters button {
+    flex: 1; padding: 5px 0; font-size: 12px; color: var(--ink-2);
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: 6px; cursor: pointer;
+  }
+  .filters button.on { border-color: var(--ink-2); color: var(--ink); font-weight: 600; }
+  .card {
+    background: var(--surface); border: 1px solid var(--ring);
+    border-radius: 10px; padding: 12px; cursor: pointer;
+  }
+  .card.sel { border-color: var(--ink-2); }
+  .card-head { display: flex; align-items: center; gap: 8px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; }
+  .name { font-weight: 650; flex: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .tiles {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px;
+  }
+  .tile .v {
+    font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums;
+  }
+  .tile .k {
+    font-size: 10.5px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .foot { margin-top: 8px; font-size: 12px; color: var(--ink-2); }
+  .empty { color: var(--muted); text-align: center; margin-top: 40px; }
+</style>
+</head>
+<body data-palette="#2a78d6,#1baf7a,#eda100,#008300,#4a3aa7,#e34948,#e87ba4,#eb6834">
+<div id="sidebar">
+  <div>
+    <h1>Tracker</h1>
+    <div class="sub" id="updated">loading…</div>
+  </div>
+  <div class="filters" id="range">
+    <button data-h="6">6 h</button>
+    <button data-h="24" class="on">24 h</button>
+    <button data-h="168">7 d</button>
+  </div>
+  <div id="cards"><div class="empty">No pings yet</div></div>
+</div>
+<div id="map"></div>
+<script>
+const LIGHT = matchMedia("(prefers-color-scheme: light)").matches;
+// Fixed categorical order (light/dark variants) — assigned per device, never cycled.
+const PAL_LIGHT = ["#2a78d6","#1baf7a","#eda100","#008300","#4a3aa7","#e34948","#e87ba4","#eb6834"];
+const PAL_DARK  = ["#3987e5","#199e70","#c98500","#008300","#9085e9","#e66767","#d55181","#d95926"];
+const PAL = LIGHT ? PAL_LIGHT : PAL_DARK;
+const STALE_S = 45 * 60;   // 3 missed 15-min reports = stale
+
+const map = L.map("map").setView([37.77, -122.42], 12);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: "&copy; OpenStreetMap"
+}).addTo(map);
+
+let hours = 24, selected = null, fitted = false;
+const layers = {};           // device -> {marker, trail}
+const colorOf = {};          // device -> palette slot, fixed on first sight
+let nextSlot = 0;
+
+document.getElementById("range").addEventListener("click", e => {
+  if (!e.target.dataset.h) return;
+  hours = +e.target.dataset.h;
+  document.querySelectorAll("#range button").forEach(b =>
+    b.classList.toggle("on", b === e.target));
+  refresh();
+});
+
+const battPct = mv => !mv ? null :
+  Math.max(0, Math.min(100, Math.round((mv - 3300) / (4200 - 3300) * 100)));
+const csqPct = c => (c == null || c === 99) ? null : Math.round(c / 31 * 100);
+const rssiPct = r => r == null ? null :
+  Math.max(0, Math.min(100, Math.round((r + 100) / 70 * 100)));
+const ago = ts => {
+  const s = Date.now() / 1000 - ts;
+  if (s < 90) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return (s / 3600).toFixed(1) + " h ago";
+  return (s / 86400).toFixed(1) + " d ago";
+};
+
+async function refresh() {
+  let devs;
+  try { devs = await (await fetch("/api/devices")).json(); }
+  catch { return; }
+  document.getElementById("updated").textContent =
+    "updated " + new Date().toLocaleTimeString();
+
+  const cards = document.getElementById("cards");
+  cards.innerHTML = "";
+  if (!devs.length) {
+    cards.innerHTML = '<div class="empty">No pings yet</div>';
+    return;
+  }
+  if (selected === null) selected = devs[0].device;
+
+  const bounds = [];
+  for (const d of devs) {
+    if (!(d.device in colorOf)) colorOf[d.device] = nextSlot++ % PAL.length;
+    const color = PAL[colorOf[d.device]];
+    const pos = d.fix ? [d.lat, d.lon] :
+      d.last_fix ? [d.last_fix.lat, d.last_fix.lon] : null;
+    const fresh = Date.now() / 1000 - d.ts < STALE_S;
+    const batt = battPct(d.batt_mv), sig = csqPct(d.csq) ?? rssiPct(d.rssi);
+    const zone = d.listener ? `at ${d.listener}` : null;
+
+    // --- card ---
+    const el = document.createElement("div");
+    el.className = "card" + (d.device === selected ? " sel" : "");
+    el.innerHTML = `
+      <div class="card-head">
+        <div class="swatch" style="background:${color}"></div>
+        <div class="name">${d.device}</div>
+        <div class="dot" title="${fresh ? "reporting" : "stale"}"
+             style="background:${fresh ? "var(--good)" : "var(--muted)"}"></div>
+      </div>
+      <div class="tiles">
+        <div class="tile"><div class="v" style="${batt !== null && batt < 20 ? "color:var(--critical)" : ""}">${batt ?? "–"}%</div><div class="k">battery</div></div>
+        <div class="tile"><div class="v">${sig ?? "–"}%</div><div class="k">signal</div></div>
+        <div class="tile"><div class="v">${d.fix ? (d.sats ?? "–") : "no fix"}</div><div class="k">${d.fix ? "sats" : "gps"}</div></div>
+      </div>
+      <div class="foot">${fresh ? "" : "⚠ "}${zone ? zone + " · " : ""}seen ${ago(d.ts)}${d.fix ? "" : d.last_fix ? " · showing last fix (" + ago(d.last_fix.ts) + ")" : " · no position yet"}</div>`;
+    el.onclick = () => { selected = d.device; refresh(); };
+    cards.appendChild(el);
+
+    // --- map ---
+    if (!pos) continue;
+    bounds.push(pos);
+    if (!layers[d.device]) {
+      layers[d.device] = {
+        marker: L.circleMarker(pos, {
+          radius: 8, weight: 2, color: LIGHT ? "#fcfcfb" : "#1a1a19",
+          fillColor: color, fillOpacity: 1
+        }).addTo(map),
+        trail: L.polyline([], { color, weight: 2, opacity: 0.75 }).addTo(map)
+      };
+    }
+    const ly = layers[d.device];
+    ly.marker.setLatLng(pos);
+    ly.marker.bindTooltip(
+      `<b>${d.device}</b><br>${batt ?? "–"}% batt · seen ${ago(d.ts)}`);
+
+    if (d.device === selected) {
+      const hist = await (await fetch(
+        `/api/devices/${encodeURIComponent(d.device)}/history?hours=${hours}`)).json();
+      ly.trail.setLatLngs(hist.map(p => [p.lat, p.lon]));
+    } else {
+      ly.trail.setLatLngs([]);
+    }
+  }
+  if (!fitted && bounds.length) {
+    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+    fitted = true;
+  }
+}
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>
