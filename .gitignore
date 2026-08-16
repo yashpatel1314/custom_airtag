@@ -12,3 +12,6 @@ findmy/keys/
 firmware-listener/include/config.h
 server/start-server.bat
 server/start-listener.bat
+
+# Landmarks contain real home/work coordinates — keep private
+server/landmarks.json

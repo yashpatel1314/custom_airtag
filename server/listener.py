@@ -34,27 +34,43 @@ def parse_args():
 
 async def main():
     args = parse_args()
-    print(f"listener '{args.listener}' -> {args.server} (ctrl+c to stop)")
-    while True:
-        heard = {}  # mac -> best rssi
+    mode = "FIND" if args.interval <= 3 else "watch"
+    print(f"listener '{args.listener}' [{mode}] -> {args.server} "
+          f"every {args.interval}s (ctrl+c to stop)")
 
-        def on_advert(device, adv):
-            payload = adv.manufacturer_data.get(APPLE_ID)
-            # Find My offline-finding frame: type 0x12, length 0x19
-            if payload and len(payload) >= 2 and payload[0] == 0x12 and payload[1] == 0x19:
-                mac = device.address.upper()
-                rssi = adv.rssi or -100
-                heard[mac] = max(heard.get(mac, -999), rssi)
+    # Scanner runs continuously; we keep the latest RSSI + timestamp per MAC
+    # and report on a timer. A tag counts as "still here" if seen within the
+    # staleness window, so a fast Find-mode interval never drops a live tag
+    # just because it didn't advertise in the last 1.5 s.
+    recent = {}  # mac -> [rssi, monotonic_last_seen, batt_level]
+    keep = max(6.0, args.interval * 2)
 
-        scanner = BleakScanner(detection_callback=on_advert)
-        await scanner.start()
-        await asyncio.sleep(max(5, args.interval - 2))
-        await scanner.stop()
+    # Find My status byte (payload[2]) encodes battery in its top bits.
+    BATT = {0x10: "full", 0x40: "medium", 0x80: "low", 0xC0: "critical"}
 
-        if heard:
+    def on_advert(device, adv):
+        payload = adv.manufacturer_data.get(APPLE_ID)
+        # Find My offline-finding frame: type 0x12, length 0x19
+        if payload and len(payload) >= 2 and payload[0] == 0x12 and payload[1] == 0x19:
+            batt = BATT.get(payload[2] & 0xF0) if len(payload) >= 3 else None
+            recent[device.address.upper()] = [adv.rssi or -100, time.monotonic(), batt]
+
+    scanner = BleakScanner(detection_callback=on_advert)
+    await scanner.start()
+    try:
+        while True:
+            await asyncio.sleep(args.interval)
+            now = time.monotonic()
+            heard = {m: v for m, v in recent.items() if now - v[1] <= keep}
+            for m in [m for m, v in recent.items() if now - v[1] > keep]:
+                del recent[m]
+            if not heard:
+                print(time.strftime("%H:%M:%S"), "no beacons")
+                continue
             body = {
                 "listener": args.listener,
-                "tags": [{"mac": m, "rssi": r} for m, r in heard.items()],
+                "tags": [{"mac": m, "rssi": v[0], "batt": v[2]}
+                         for m, v in heard.items()],
             }
             if args.lat is not None and args.lon is not None:
                 body["lat"], body["lon"] = args.lat, args.lon
@@ -67,13 +83,13 @@ async def main():
             try:
                 with urllib.request.urlopen(req, timeout=10) as r:
                     resp = json.loads(r.read())
+                rec = resp.get("recognized") or []
                 print(time.strftime("%H:%M:%S"),
-                      f"heard {len(heard)} beacon(s), recognized: "
-                      f"{resp.get('recognized') or 'none'}")
+                      f"heard {len(heard)}, ours: {rec or 'none'}")
             except Exception as e:
                 print(time.strftime("%H:%M:%S"), "post failed:", e)
-        else:
-            print(time.strftime("%H:%M:%S"), "no beacons this cycle")
+    finally:
+        await scanner.stop()
 
 
 if __name__ == "__main__":

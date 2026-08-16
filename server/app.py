@@ -18,12 +18,20 @@ API_TOKEN = os.environ.get("API_TOKEN", "change-me-long-random-string")
 DB_PATH = os.environ.get("DB_PATH", str(Path(__file__).parent / "tracker.db"))
 STATIC_DIR = Path(__file__).parent / "static"
 
+import json
+
 # BLE MAC -> friendly tag name, for listener-reported sightings.
 TAGS_PATH = Path(__file__).parent / "tags.json"
 TAG_NAMES = {}
 if TAGS_PATH.exists():
-    import json
     TAG_NAMES = {k.upper(): v for k, v in json.loads(TAGS_PATH.read_text()).items()}
+
+# Zone/listener name -> fixed coordinates, so a listener that doesn't send its
+# own lat/lon still gives its tags a map pin at the zone's landmark.
+LANDMARKS_PATH = Path(__file__).parent / "landmarks.json"
+LANDMARKS = {}
+if LANDMARKS_PATH.exists():
+    LANDMARKS = {k.lower(): v for k, v in json.loads(LANDMARKS_PATH.read_text()).items()}
 
 app = FastAPI(title="custom-airtag")
 
@@ -46,7 +54,8 @@ with db() as conn:
            )"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_dev_ts ON pings(device, ts)")
-    for col, typ in (("listener", "TEXT"), ("rssi", "INTEGER")):
+    for col, typ in (("listener", "TEXT"), ("rssi", "INTEGER"),
+                     ("batt_lvl", "TEXT")):
         try:
             conn.execute(f"ALTER TABLE pings ADD COLUMN {col} {typ}")
         except sqlite3.OperationalError:
@@ -96,6 +105,10 @@ async def sighting(req: Request, x_token: str = Header(default="")):
     body = await req.json()
     listener = str(body.get("listener", "?"))[:64]
     lat, lon = body.get("lat"), body.get("lon")
+    # No explicit position? Fall back to this zone's landmark coordinates.
+    if (lat is None or lon is None) and listener.lower() in LANDMARKS:
+        lm = LANDMARKS[listener.lower()]
+        lat, lon = lm.get("lat"), lm.get("lon")
     has_pos = lat is not None and lon is not None
     now = int(time.time())
     seen = []
@@ -105,10 +118,11 @@ async def sighting(req: Request, x_token: str = Header(default="")):
             if not name:
                 continue  # not one of our tags
             conn.execute(
-                "INSERT INTO pings (device, ts, fix, lat, lon, rssi, listener)"
-                " VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO pings (device, ts, fix, lat, lon, rssi, listener,"
+                " batt_lvl) VALUES (?,?,?,?,?,?,?,?)",
                 (name, now, int(has_pos), lat if has_pos else None,
-                 lon if has_pos else None, t.get("rssi"), listener),
+                 lon if has_pos else None, t.get("rssi"), listener,
+                 t.get("batt")),
             )
             seen.append(name)
     return {"ok": True, "recognized": seen}

@@ -1,0 +1,4 @@
+{
+  "home":      {"lat": 37.7749, "lon": -122.4194, "label": "Home"},
+  "office":    {"lat": 37.7858, "lon": -122.4064, "label": "Office"}
+}

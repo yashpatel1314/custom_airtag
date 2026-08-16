@@ -62,6 +62,35 @@
   }
   .foot { margin-top: 8px; font-size: 12px; color: var(--ink-2); }
   .empty { color: var(--muted); text-align: center; margin-top: 40px; }
+  .findbtn {
+    margin-top: 10px; width: 100%; padding: 7px 0; font-size: 12.5px;
+    font-weight: 600; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--ink-2); border-radius: 7px; cursor: pointer;
+  }
+  /* Find overlay */
+  #finder {
+    position: fixed; inset: 0; z-index: 9999; display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    background: var(--page); text-align: center; padding: 24px;
+  }
+  #finder.on { display: flex; }
+  #finder .fname { font-size: 15px; color: var(--ink-2); letter-spacing: .04em;
+    text-transform: uppercase; }
+  #finder .ring {
+    width: 260px; height: 260px; border-radius: 50%; margin: 24px 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .4s, box-shadow .4s; background: var(--hairline);
+  }
+  #finder .prox { font-size: 30px; font-weight: 700; }
+  #finder .dbm { font-size: 14px; color: var(--ink-2);
+    font-variant-numeric: tabular-nums; margin-top: 6px; }
+  #finder .hint { color: var(--muted); font-size: 13px; max-width: 320px;
+    margin-top: 8px; }
+  #finder .close {
+    margin-top: 28px; padding: 9px 22px; font-size: 14px; font-weight: 600;
+    color: var(--ink); background: var(--surface); border: 1px solid var(--ink-2);
+    border-radius: 8px; cursor: pointer;
+  }
 </style>
 </head>
 <body data-palette="#2a78d6,#1baf7a,#eda100,#008300,#4a3aa7,#e34948,#e87ba4,#eb6834">
@@ -78,6 +107,18 @@
   <div id="cards"><div class="empty">No pings yet</div></div>
 </div>
 <div id="map"></div>
+
+<div id="finder">
+  <div class="fname" id="f-name">tag</div>
+  <div class="ring" id="f-ring"><div>
+    <div class="prox" id="f-prox">Searching…</div>
+    <div class="dbm" id="f-dbm"></div>
+  </div></div>
+  <div class="hint" id="f-hint">Walk around slowly — the reading climbs as you
+    get closer. Needs the listener running in <b>find mode</b>.</div>
+  <button class="close" onclick="closeFinder()">Done</button>
+</div>
+
 <script>
 const LIGHT = matchMedia("(prefers-color-scheme: light)").matches;
 // Fixed categorical order (light/dark variants) — assigned per device, never cycled.
@@ -141,6 +182,12 @@ async function refresh() {
     const fresh = Date.now() / 1000 - d.ts < STALE_S;
     const batt = battPct(d.batt_mv), sig = csqPct(d.csq) ?? rssiPct(d.rssi);
     const zone = d.listener ? `at ${d.listener}` : null;
+    // BLE tags report a 4-level battery status; GPS tags report mV -> %.
+    const BATT_LABEL = { full: "Full", medium: "Med", low: "Low", critical: "Crit" };
+    const battText = d.batt_lvl ? (BATT_LABEL[d.batt_lvl] || d.batt_lvl)
+                                : (batt !== null ? batt + "%" : "n/a");
+    const battLow = d.batt_lvl === "low" || d.batt_lvl === "critical"
+                    || (batt !== null && batt < 20);
 
     // --- card ---
     const el = document.createElement("div");
@@ -153,11 +200,15 @@ async function refresh() {
              style="background:${fresh ? "var(--good)" : "var(--muted)"}"></div>
       </div>
       <div class="tiles">
-        <div class="tile"><div class="v" style="${batt !== null && batt < 20 ? "color:var(--critical)" : ""}">${batt ?? "–"}%</div><div class="k">battery</div></div>
+        <div class="tile"><div class="v" style="${battLow ? "color:var(--critical)" : ""}">${battText}</div><div class="k">battery</div></div>
         <div class="tile"><div class="v">${sig ?? "–"}%</div><div class="k">signal</div></div>
-        <div class="tile"><div class="v">${d.fix ? (d.sats ?? "–") : "no fix"}</div><div class="k">${d.fix ? "sats" : "gps"}</div></div>
+        ${d.listener
+          ? `<div class="tile"><div class="v" style="font-size:14px">${d.listener}</div><div class="k">zone</div></div>`
+          : `<div class="tile"><div class="v">${d.fix ? (d.sats ?? "–") : "no fix"}</div><div class="k">${d.fix ? "sats" : "gps"}</div></div>`}
       </div>
-      <div class="foot">${fresh ? "" : "⚠ "}${zone ? zone + " · " : ""}seen ${ago(d.ts)}${d.fix ? "" : d.last_fix ? " · showing last fix (" + ago(d.last_fix.ts) + ")" : " · no position yet"}</div>`;
+      <div class="foot">${fresh ? "" : "⚠ "}${zone ? zone + " · " : ""}seen ${ago(d.ts)}${d.listener ? "" : (d.fix ? "" : d.last_fix ? " · showing last fix (" + ago(d.last_fix.ts) + ")" : " · no position yet")}</div>
+      <button class="findbtn">🔍 Find this</button>`;
+    el.querySelector(".findbtn").onclick = e => { e.stopPropagation(); openFinder(d.device); };
     el.onclick = () => { selected = d.device; refresh(); };
     cards.appendChild(el);
 
@@ -194,6 +245,55 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, 30000);
+
+// ---- Find mode: big proximity meter, polls fast ----
+// RSSI -> proximity bucket (nRF52840 at 0 dBm TX). Higher (less negative) = closer.
+const PROX = [
+  { min: -55, label: "Right here",  color: "#0ca30c", glow: "#0ca30c" },
+  { min: -68, label: "Very close",  color: "#1baf7a", glow: "#1baf7a" },
+  { min: -80, label: "Nearby",      color: "#eda100", glow: "#eda100" },
+  { min: -999, label: "Far / weak", color: "#e34948", glow: "#e34948" },
+];
+let findTag = null, findTimer = null;
+
+function openFinder(name) {
+  findTag = name;
+  document.getElementById("f-name").textContent = name;
+  document.getElementById("finder").classList.add("on");
+  pollFinder();
+  findTimer = setInterval(pollFinder, 1500);
+}
+function closeFinder() {
+  clearInterval(findTimer);
+  document.getElementById("finder").classList.remove("on");
+  findTag = null;
+}
+async function pollFinder() {
+  let devs;
+  try { devs = await (await fetch("/api/devices")).json(); } catch { return; }
+  const d = devs.find(x => x.device === findTag);
+  const ring = document.getElementById("f-ring");
+  const prox = document.getElementById("f-prox");
+  const dbm = document.getElementById("f-dbm");
+  const stale = !d || d.rssi == null || (Date.now() / 1000 - d.ts > 8);
+  if (stale) {
+    prox.textContent = "Searching…";
+    dbm.textContent = d && d.rssi != null ? `last ${d.rssi} dBm, ${ago(d.ts)}` : "";
+    ring.style.background = "var(--hairline)";
+    ring.style.boxShadow = "none";
+    prox.style.color = "var(--ink)";
+    return;
+  }
+  const p = PROX.find(b => d.rssi >= b.min);
+  prox.textContent = p.label;
+  prox.style.color = p.color;
+  dbm.textContent = `${d.rssi} dBm`;
+  // ring fills and glows stronger as you close in
+  const pct = Math.max(0, Math.min(100, Math.round((d.rssi + 95) / 45 * 100)));
+  ring.style.background =
+    `radial-gradient(circle, ${p.glow}33 ${pct}%, var(--hairline) ${pct + 1}%)`;
+  ring.style.boxShadow = `0 0 ${pct / 2}px ${p.glow}`;
+}
 </script>
 </body>
 </html>
