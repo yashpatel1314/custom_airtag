@@ -55,7 +55,7 @@ with db() as conn:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_dev_ts ON pings(device, ts)")
     for col, typ in (("listener", "TEXT"), ("rssi", "INTEGER"),
-                     ("batt_lvl", "TEXT")):
+                     ("batt_lvl", "TEXT"), ("batt_pct", "INTEGER")):
         try:
             conn.execute(f"ALTER TABLE pings ADD COLUMN {col} {typ}")
         except sqlite3.OperationalError:
@@ -119,10 +119,10 @@ async def sighting(req: Request, x_token: str = Header(default="")):
                 continue  # not one of our tags
             conn.execute(
                 "INSERT INTO pings (device, ts, fix, lat, lon, rssi, listener,"
-                " batt_lvl) VALUES (?,?,?,?,?,?,?,?)",
+                " batt_lvl, batt_pct) VALUES (?,?,?,?,?,?,?,?,?)",
                 (name, now, int(has_pos), lat if has_pos else None,
                  lon if has_pos else None, t.get("rssi"), listener,
-                 t.get("batt")),
+                 t.get("batt"), t.get("batt_pct")),
             )
             seen.append(name)
     return {"ok": True, "recognized": seen}

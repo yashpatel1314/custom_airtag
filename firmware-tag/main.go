@@ -29,7 +29,7 @@ func main() {
 	}
 	println("key is", AdvertisingKey, "(", len(key), "bytes)")
 
-	status := readBatteryStatus()
+	pct := readBatteryPercent()
 
 	must("enable BLE stack", adapter.Enable())
 
@@ -38,48 +38,70 @@ func main() {
 
 	println("configure advertising...")
 	adv := adapter.DefaultAdvertisement()
-	must("config adv", adv.Configure(advOptions(key, status)))
+	must("config adv", adv.Configure(advOptions(key, pct)))
 
 	println("start advertising...")
 	must("start adv", adv.Start())
+	println("advertising, battery", pct, "%")
 
-	// Re-check the battery periodically. Reconfigure the advertisement only
-	// when the level actually changes (rare), so steady-state is just
-	// "advertise forever" — no repeated stop/start to destabilize.
+	// Brief calibration burst (visible on USB serial) then settle into a slow
+	// maintenance loop that only reconfigures when the battery % changes.
+	for i := 0; i < 8; i++ {
+		time.Sleep(2 * time.Second)
+		readBatteryPercent()
+	}
+	last := pct
 	for {
 		time.Sleep(2 * time.Minute)
-		ns := readBatteryStatus()
-		if ns != status {
-			status = ns
+		p := readBatteryPercent()
+		if p != last {
+			last = p
 			adv.Stop()
-			adv.Configure(advOptions(key, status))
+			adv.Configure(advOptions(key, p))
 			adv.Start()
-			println("battery status updated:", int(status))
+			println("battery updated:", p, "%")
 		}
 	}
 }
 
-// advOptions builds the advertisement options for a given battery status byte.
-func advOptions(key []byte, status byte) bluetooth.AdvertisementOptions {
+// advOptions builds advertisement options for a given battery percentage.
+func advOptions(key []byte, pct int) bluetooth.AdvertisementOptions {
 	return bluetooth.AdvertisementOptions{
 		AdvertisementType: bluetooth.AdvertisingTypeNonConnInd,
 		Interval:          bluetooth.NewDuration(1285000 * time.Microsecond), // 1285ms
-		ManufacturerData:  []bluetooth.ManufacturerDataElement{newData(key, status)},
+		ManufacturerData:  []bluetooth.ManufacturerDataElement{newData(key, pct)},
 	}
 }
 
-// newData builds the FindMy manufacturer data with a live battery-status byte
-// (findmy.NewData hardcodes "full"; this lets us report the real level).
-func newData(key []byte, status byte) bluetooth.ManufacturerDataElement {
+// newData builds the FindMy manufacturer data. The status byte carries the
+// standard 4-level battery status (Apple-compatible); the trailing hint byte,
+// which stock FindMy leaves 0x00, we repurpose to carry a precise 0-100%
+// reading for our own listener. (This makes the advert diverge slightly from
+// stock OpenHaystack — only relevant if reviving the Apple Find My backend.)
+func newData(key []byte, pct int) bluetooth.ManufacturerDataElement {
 	data := make([]byte, 0, 27)
 	data = append(data, findmy.PayloadTypeRegistered, findmy.PayloadLength)
-	data = append(data, status)
+	data = append(data, statusFromPercent(pct))
 	data = append(data, key[6:]...) // last 22 bytes of advertising key
 	data = append(data, key[0]>>6)  // first two bits of advertising key
-	data = append(data, findmy.Hint)
+	data = append(data, byte(pct))  // battery percent (stock FindMy: 0x00 hint)
 	return bluetooth.ManufacturerDataElement{
 		CompanyID: findmy.AppleCompanyID,
 		Data:      data,
+	}
+}
+
+// statusFromPercent maps a battery percentage to a FindMy 4-level status byte.
+func statusFromPercent(pct int) byte {
+	switch {
+	case pct >= 60:
+		return findmy.StatusBatteryFull
+	case pct >= 35:
+		return findmy.StatusBatteryMedium
+	case pct >= 15:
+		return findmy.StatusBatteryLow
+	default:
+		return findmy.StatusBatteryCritical
 	}
 }
 

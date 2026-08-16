@@ -182,12 +182,14 @@ async function refresh() {
     const fresh = Date.now() / 1000 - d.ts < STALE_S;
     const batt = battPct(d.batt_mv), sig = csqPct(d.csq) ?? rssiPct(d.rssi);
     const zone = d.listener ? `at ${d.listener}` : null;
-    // BLE tags report a 4-level battery status; GPS tags report mV -> %.
+    // Battery: prefer a precise % (our BLE firmware or GPS mV), else the
+    // coarse 4-level label, else unknown.
     const BATT_LABEL = { full: "Full", medium: "Med", low: "Low", critical: "Crit" };
-    const battText = d.batt_lvl ? (BATT_LABEL[d.batt_lvl] || d.batt_lvl)
-                                : (batt !== null ? batt + "%" : "n/a");
-    const battLow = d.batt_lvl === "low" || d.batt_lvl === "critical"
-                    || (batt !== null && batt < 20);
+    const battPctVal = d.batt_pct != null ? d.batt_pct : batt;  // batt = from mV
+    const battText = battPctVal != null ? battPctVal + "%"
+                   : d.batt_lvl ? (BATT_LABEL[d.batt_lvl] || d.batt_lvl) : "n/a";
+    const battLow = (battPctVal != null && battPctVal < 20)
+                    || d.batt_lvl === "low" || d.batt_lvl === "critical";
 
     // --- card ---
     const el = document.createElement("div");

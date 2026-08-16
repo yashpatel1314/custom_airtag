@@ -2,11 +2,7 @@
 
 package main
 
-import (
-	"machine"
-
-	"github.com/hybridgroup/go-haystack/lib/findmy"
-)
+import "machine"
 
 // AdvertisingKey is the public key of the device. Must be base64 encoded.
 var AdvertisingKey string
@@ -29,9 +25,8 @@ func initBattery() {
 	battReady = true
 }
 
-// readBatteryStatus reads the battery voltage and maps it to a FindMy
-// battery-status byte. Serial prints let us calibrate on USB.
-func readBatteryStatus() byte {
+// readBatteryMV returns the battery voltage in millivolts.
+func readBatteryMV() int {
 	if !battReady {
 		initBattery()
 	}
@@ -41,18 +36,24 @@ func readBatteryStatus() byte {
 		sum += uint32(battADC.Get())
 	}
 	raw := sum / n
-	// TinyGo nRF52 SAADC: Get() is 16-bit, full-scale 3.6 V (internal 0.6 V
-	// ref, gain 1/6). On-board divider ratio ~2.961 (1M / 510k).
-	mv := int(raw) * 3600 / 65535 * 2961 / 1000
-	println("batt raw", int(raw), "vbat_mV", mv)
-	switch {
-	case mv >= 3900:
-		return findmy.StatusBatteryFull
-	case mv >= 3700:
-		return findmy.StatusBatteryMedium
-	case mv >= 3500:
-		return findmy.StatusBatteryLow
-	default:
-		return findmy.StatusBatteryCritical
+	// raw is 16-bit full-scale. 3086 = empirically-calibrated full-scale in mV
+	// (a fully-charged 4.2 V cell read raw~30125; TinyGo's SAADC default ref is
+	// ~3.0 V, not 3.6 V). 2961 = on-board divider ratio (1M/510k, x2.961).
+	return int(raw) * 3086 / 65535 * 2961 / 1000
+}
+
+// readBatteryPercent maps voltage to an approximate 0-100% charge.
+// LiPo curve approximated as linear 3.30 V (empty) -> 4.20 V (full).
+// Prints raw values on USB serial for calibration.
+func readBatteryPercent() int {
+	mv := readBatteryMV()
+	pct := (mv - 3300) * 100 / (4200 - 3300)
+	if pct < 0 {
+		pct = 0
 	}
+	if pct > 100 {
+		pct = 100
+	}
+	println("batt mv", mv, "pct", pct)
+	return pct
 }

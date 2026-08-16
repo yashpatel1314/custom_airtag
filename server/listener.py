@@ -53,7 +53,11 @@ async def main():
         # Find My offline-finding frame: type 0x12, length 0x19
         if payload and len(payload) >= 2 and payload[0] == 0x12 and payload[1] == 0x19:
             batt = BATT.get(payload[2] & 0xF0) if len(payload) >= 3 else None
-            recent[device.address.upper()] = [adv.rssi or -100, time.monotonic(), batt]
+            # Our firmware puts a precise 0-100% in the trailing hint byte
+            # (stock FindMy leaves it 0x00, so 0 reads as "unknown").
+            pct = payload[26] if len(payload) >= 27 and payload[26] else None
+            recent[device.address.upper()] = [adv.rssi or -100, time.monotonic(),
+                                              batt, pct]
 
     scanner = BleakScanner(detection_callback=on_advert)
     await scanner.start()
@@ -69,7 +73,7 @@ async def main():
                 continue
             body = {
                 "listener": args.listener,
-                "tags": [{"mac": m, "rssi": v[0], "batt": v[2]}
+                "tags": [{"mac": m, "rssi": v[0], "batt": v[2], "batt_pct": v[3]}
                          for m, v in heard.items()],
             }
             if args.lat is not None and args.lon is not None:
