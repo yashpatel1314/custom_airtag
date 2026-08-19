@@ -24,10 +24,13 @@ radio always needs a data plan, so it can't be fixed-price.
 
 ## Build C: BLE tags + listener nodes
 
-1. Flash tags (see [findmy/README.md](findmy/README.md) — `haystack keys`
-   + `haystack flash`, or build the UF2 with TinyGo directly).
+1. Flash tags — full per-tag walkthrough in
+   [docs/adding-a-tag.md](docs/adding-a-tag.md) (keys, firmware build with
+   battery reporting, flash, verify).
 2. Register each tag's MAC in [server/tags.json](server/tags.json) — the MAC
-   is derived from the advertisement key (first 6 bytes, top two bits set).
+   is derived from the advertisement key (first 6 bytes, top two bits set);
+   `python tools/mac_from_key.py findmy/keys/<tag>.keys` computes it.
+   `python tools/scan_tags.py` then confirms the tag is heard and registered.
 3. For each zone (home, garage, office...): edit
    [firmware-listener/include/config.h](firmware-listener/include/config.h)
    (WiFi, server URL, token, zone name, position) and flash any classic
