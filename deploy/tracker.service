@@ -1,0 +1,16 @@
+[Unit]
+Description=custom_airtag tracker server
+After=network.target
+
+[Service]
+User=tracker
+Group=tracker
+WorkingDirectory=/opt/custom_airtag/server
+EnvironmentFile=/etc/tracker.env
+# --host 127.0.0.1: only Caddy should reach uvicorn, never the internet.
+ExecStart=/opt/custom_airtag/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+# Replace YOUR-HOST with your DuckDNS name, e.g. yash-tracker.duckdns.org
+# Caddy obtains and renews the Let's Encrypt certificate automatically.
+YOUR-HOST {
+	encode gzip
+	reverse_proxy 127.0.0.1:8000
+}
