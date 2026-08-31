@@ -10,13 +10,21 @@ import sqlite3
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               RedirectResponse)
 from fastapi.staticfiles import StaticFiles
+
+import auth
 
 API_TOKEN = os.environ.get("API_TOKEN", "change-me-long-random-string")
 DB_PATH = os.environ.get("DB_PATH", str(Path(__file__).parent / "tracker.db"))
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Dashboard session signing key, and whether cookies require HTTPS.
+# COOKIE_SECURE=0 is only for local http testing.
+SESSION_SECRET = auth.load_secret(DB_PATH)
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1") != "0"
 
 import json
 
@@ -60,6 +68,15 @@ with db() as conn:
             conn.execute(f"ALTER TABLE pings ADD COLUMN {col} {typ}")
         except sqlite3.OperationalError:
             pass  # column already exists
+
+
+def require_session(request: Request):
+    """Gate for routes that expose location data. A no-op when auth is off."""
+    if not auth.enabled():
+        return
+    token = request.cookies.get(auth.COOKIE_NAME, "")
+    if not auth.valid_token(SESSION_SECRET, token):
+        raise HTTPException(401, "login required")
 
 
 @app.post("/api/ping")
@@ -128,7 +145,7 @@ async def sighting(req: Request, x_token: str = Header(default="")):
     return {"ok": True, "recognized": seen}
 
 
-@app.get("/api/devices")
+@app.get("/api/devices", dependencies=[Depends(require_session)])
 def devices():
     with db() as conn:
         rows = conn.execute(
@@ -152,7 +169,8 @@ def devices():
     return JSONResponse(out)
 
 
-@app.get("/api/devices/{device}/history")
+@app.get("/api/devices/{device}/history",
+         dependencies=[Depends(require_session)])
 def history(device: str, hours: float = 24):
     since = int(time.time() - hours * 3600)
     with db() as conn:
@@ -165,8 +183,62 @@ def history(device: str, hours: float = 24):
 
 
 @app.get("/")
-def index():
+def index(request: Request):
+    if auth.enabled() and not auth.valid_token(
+            SESSION_SECRET, request.cookies.get(auth.COOKIE_NAME, "")):
+        return RedirectResponse("/login", status_code=302)
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return FileResponse(STATIC_DIR / "manifest.webmanifest",
+                        media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker():
+    # Served from the root so its scope covers the whole app; a worker at
+    # /static/sw.js could only ever control /static.
+    return FileResponse(STATIC_DIR / "sw.js",
+                        media_type="application/javascript")
+
+
+@app.get("/login")
+def login_page():
+    return HTMLResponse(auth.login_page_html())
+
+
+@app.post("/login")
+async def login(request: Request):
+    ip = request.client.host if request.client else "?"
+    if auth.rate_limited(ip):
+        return HTMLResponse(
+            auth.login_page_html("Too many attempts. Try again in 15 minutes."),
+            status_code=429)
+    form = await request.form()
+    if not auth.password_ok(str(form.get("password", ""))):
+        auth.record_failure(ip)
+        return HTMLResponse(auth.login_page_html("Incorrect password."),
+                            status_code=401)
+    expiry = int(time.time()) + auth.SESSION_SECONDS
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie(auth.COOKIE_NAME, auth.make_token(SESSION_SECRET, expiry),
+                    max_age=auth.SESSION_SECONDS, httponly=True,
+                    secure=COOKIE_SECURE, samesite="lax")
+    return resp
+
+
+@app.get("/logout")
+def logout():
+    resp = RedirectResponse("/login", status_code=302)
+    resp.delete_cookie(auth.COOKIE_NAME)
+    return resp
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
