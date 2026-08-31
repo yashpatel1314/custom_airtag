@@ -15,3 +15,6 @@ server/start-listener.bat
 
 # Landmarks contain real home/work coordinates — keep private
 server/landmarks.json
+
+# Local Claude Code config and project skills — keep out of the repo
+.claude/
