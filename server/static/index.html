@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracker</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#12212e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tracker">
+<link rel="apple-touch-icon" href="/static/icons/icon-180.png">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -120,6 +126,19 @@
 </div>
 
 <script>
+// Session can expire while the page is open (or while it sits in the iOS
+// app switcher for weeks). Bounce to the login page instead of rendering
+// an error. No-op when the server has no password configured.
+async function api(path) {
+  const r = await fetch(path);
+  if (r.status === 401) { location.href = "/login"; throw new Error("401"); }
+  return r.json();
+}
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
 const LIGHT = matchMedia("(prefers-color-scheme: light)").matches;
 // Fixed categorical order (light/dark variants) — assigned per device, never cycled.
 const PAL_LIGHT = ["#2a78d6","#1baf7a","#eda100","#008300","#4a3aa7","#e34948","#e87ba4","#eb6834"];
@@ -160,7 +179,7 @@ const ago = ts => {
 
 async function refresh() {
   let devs;
-  try { devs = await (await fetch("/api/devices")).json(); }
+  try { devs = await api("/api/devices"); }
   catch { return; }
   document.getElementById("updated").textContent =
     "updated " + new Date().toLocaleTimeString();
@@ -232,8 +251,8 @@ async function refresh() {
       `<b>${d.device}</b><br>${batt ?? "–"}% batt · seen ${ago(d.ts)}`);
 
     if (d.device === selected) {
-      const hist = await (await fetch(
-        `/api/devices/${encodeURIComponent(d.device)}/history?hours=${hours}`)).json();
+      const hist = await api(
+        `/api/devices/${encodeURIComponent(d.device)}/history?hours=${hours}`);
       ly.trail.setLatLngs(hist.map(p => [p.lat, p.lon]));
     } else {
       ly.trail.setLatLngs([]);
@@ -272,7 +291,7 @@ function closeFinder() {
 }
 async function pollFinder() {
   let devs;
-  try { devs = await (await fetch("/api/devices")).json(); } catch { return; }
+  try { devs = await api("/api/devices"); } catch { return; }
   const d = devs.find(x => x.device === findTag);
   const ring = document.getElementById("f-ring");
   const prox = document.getElementById("f-prox");

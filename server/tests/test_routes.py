@@ -73,3 +73,20 @@ def test_no_password_keeps_everything_open(make_client):
     client = make_client()
     assert client.get("/api/devices").status_code == 200
     assert client.get("/", follow_redirects=False).status_code == 200
+
+
+def test_pwa_assets_are_public(make_client):
+    """The phone fetches these before it has a session."""
+    client = make_client(**PW)
+    m = client.get("/manifest.webmanifest")
+    assert m.status_code == 200
+    assert m.json()["display"] == "standalone"
+    assert client.get("/static/icons/icon-192.png").status_code == 200
+
+
+def test_service_worker_served_at_root(make_client):
+    """Scope: a worker served from /static could only control /static."""
+    client = make_client(**PW)
+    r = client.get("/sw.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers["content-type"]
