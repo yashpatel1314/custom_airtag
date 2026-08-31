@@ -41,6 +41,10 @@ radio always needs a data plan, so it can't be fixed-price.
 A listener without coordinates (e.g. powered from a car's USB) reports
 zone-only presence: "tag-03 · at car".
 
+To reach the dashboard from your phone anywhere — HTTPS, password-gated,
+installable as an app — deploy it to a free cloud VM:
+[docs/deploying.md](docs/deploying.md).
+
 ---
 
 ## Build B: self-hosted GPS tracker
