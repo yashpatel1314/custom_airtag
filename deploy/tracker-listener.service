@@ -1,0 +1,20 @@
+[Unit]
+# The Pi has its own Bluetooth radio, so it is both the server and a
+# listener node. On a cloud VM this unit is not used.
+Description=custom_airtag BLE listener
+After=network.target bluetooth.target tracker.service
+Requires=bluetooth.target
+
+[Service]
+User=tracker
+Group=tracker
+WorkingDirectory=/opt/custom_airtag/server
+EnvironmentFile=/etc/tracker.env
+# Posts to the local server directly; no TLS hop needed on the same box.
+ExecStart=/opt/custom_airtag/.venv/bin/python listener.py \
+  --server http://127.0.0.1:8000 --listener home
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

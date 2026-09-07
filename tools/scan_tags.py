@@ -18,11 +18,11 @@ from pathlib import Path
 
 from bleak import BleakScanner
 
-APPLE_ID = 0x004C
-# Find My status byte (payload[2]) battery bits — same map as server/listener.py
-BATT = {0x10: "full", 0x40: "medium", 0x80: "low", 0xC0: "critical"}
+SERVER_DIR = Path(__file__).resolve().parents[1] / "server"
+sys.path.insert(0, str(SERVER_DIR))
+import beacon  # noqa: E402  (shared decoder lives with the server)
 
-TAGS_PATH = Path(__file__).resolve().parents[1] / "server" / "tags.json"
+TAGS_PATH = SERVER_DIR / "tags.json"
 TAGS = {k.upper(): v for k, v in json.loads(TAGS_PATH.read_text()).items()}
 
 DURATION = int(sys.argv[1]) if len(sys.argv) > 1 else 30
@@ -30,20 +30,13 @@ seen = {}  # mac -> latest decoded advert
 
 
 def on_advert(device, adv):
-    payload = adv.manufacturer_data.get(APPLE_ID)
-    # Find My offline-finding frame: type 0x12, length 0x19
-    if payload and len(payload) >= 2 and payload[0] == 0x12 and payload[1] == 0x19:
+    decoded = beacon.decode(adv.manufacturer_data.get(beacon.APPLE_ID))
+    if decoded:
         mac = device.address.upper()
         e = seen.setdefault(mac, {"count": 0})
         e["count"] += 1
         e["rssi"] = adv.rssi
-        e["status"] = payload[2]
-        e["batt_lvl"] = BATT.get(payload[2] & 0xF0)
-        # Our firmware's precise 0-100% in the trailing hint byte; stock
-        # firmware leaves it 0x00 ("unknown"), foreign Apple devices put
-        # other data there — only 1..100 is a real reading.
-        pct = payload[26] if len(payload) >= 27 else 0
-        e["batt_pct"] = pct if 0 < pct <= 100 else None
+        e.update(decoded)
 
 
 async def main():

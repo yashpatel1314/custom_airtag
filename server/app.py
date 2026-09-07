@@ -85,6 +85,37 @@ with db() as conn:
             pass  # column already exists
 
 
+# Sightings accumulate forever otherwise — roughly 0.5 GB/year for three
+# tags at a 15s interval, which is worth bounding on an SD card. Off by
+# default so an upgrade never silently discards someone's history; new
+# deployments get a value from deploy/tracker.env.example.
+RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "0") or 0)
+PRUNE_EVERY_S = 3600
+_last_prune = 0.0
+
+
+def prune_old() -> int:
+    """Delete sightings older than RETENTION_DAYS. Returns rows removed."""
+    if RETENTION_DAYS <= 0:
+        return 0
+    cutoff = int(time.time()) - RETENTION_DAYS * 86400
+    with db() as conn:
+        return conn.execute("DELETE FROM pings WHERE ts < ?", (cutoff,)).rowcount
+
+
+def maybe_prune() -> None:
+    """Prune at most once an hour, piggybacking on incoming sightings so the
+    app needs no scheduler."""
+    global _last_prune
+    now = time.monotonic()
+    if RETENTION_DAYS > 0 and now - _last_prune >= PRUNE_EVERY_S:
+        _last_prune = now
+        removed = prune_old()
+        if removed:
+            print(f"retention: removed {removed} rows older than "
+                  f"{RETENTION_DAYS} days")
+
+
 def require_session(request: Request):
     """Gate for routes that expose location data. A no-op when auth is off."""
     if not auth.enabled():
@@ -159,6 +190,7 @@ async def sighting(req: Request, x_token: str = Header(default="")):
                  t.get("batt"), t.get("batt_pct")),
             )
             seen.append(name)
+    maybe_prune()
     return {"ok": True, "recognized": seen}
 
 

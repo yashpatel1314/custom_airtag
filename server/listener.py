@@ -12,18 +12,23 @@ Usage:
 import argparse
 import asyncio
 import json
+import os
 import time
 import urllib.request
 
 from bleak import BleakScanner
 
-APPLE_ID = 0x004C  # manufacturer data company id
+import beacon
 
 
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--server", default="http://127.0.0.1:8000")
-    p.add_argument("--token", default="change-me-long-random-string")
+    # Falls back to the environment so a systemd unit can pull the secret
+    # from its EnvironmentFile instead of exposing it in the unit file.
+    p.add_argument("--token",
+                   default=os.environ.get("API_TOKEN",
+                                          "change-me-long-random-string"))
     p.add_argument("--listener", default="home")
     p.add_argument("--lat", type=float, default=None)
     p.add_argument("--lon", type=float, default=None)
@@ -42,22 +47,15 @@ async def main():
     # and report on a timer. A tag counts as "still here" if seen within the
     # staleness window, so a fast Find-mode interval never drops a live tag
     # just because it didn't advertise in the last 1.5 s.
-    recent = {}  # mac -> [rssi, monotonic_last_seen, batt_level]
+    recent = {}  # mac -> [rssi, monotonic_last_seen, batt_level, batt_pct]
     keep = max(6.0, args.interval * 2)
 
-    # Find My status byte (payload[2]) encodes battery in its top bits.
-    BATT = {0x10: "full", 0x40: "medium", 0x80: "low", 0xC0: "critical"}
-
     def on_advert(device, adv):
-        payload = adv.manufacturer_data.get(APPLE_ID)
-        # Find My offline-finding frame: type 0x12, length 0x19
-        if payload and len(payload) >= 2 and payload[0] == 0x12 and payload[1] == 0x19:
-            batt = BATT.get(payload[2] & 0xF0) if len(payload) >= 3 else None
-            # Our firmware puts a precise 0-100% in the trailing hint byte
-            # (stock FindMy leaves it 0x00, so 0 reads as "unknown").
-            pct = payload[26] if len(payload) >= 27 and payload[26] else None
-            recent[device.address.upper()] = [adv.rssi or -100, time.monotonic(),
-                                              batt, pct]
+        decoded = beacon.decode(adv.manufacturer_data.get(beacon.APPLE_ID))
+        if decoded:
+            recent[device.address.upper()] = [
+                adv.rssi or -100, time.monotonic(),
+                decoded["batt_lvl"], decoded["batt_pct"]]
 
     scanner = BleakScanner(detection_callback=on_advert)
     await scanner.start()
