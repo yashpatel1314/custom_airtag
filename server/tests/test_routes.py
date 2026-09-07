@@ -69,10 +69,47 @@ def test_healthz_is_public(make_client):
 
 
 def test_no_password_keeps_everything_open(make_client):
-    """Backward compatibility: the existing localhost setup is untouched."""
-    client = make_client()
+    """Backward compatibility: the localhost setup still works, but now it
+    has to say so explicitly."""
+    client = make_client(ALLOW_OPEN_DASHBOARD="1")
     assert client.get("/api/devices").status_code == 200
     assert client.get("/", follow_redirects=False).status_code == 200
+
+
+def test_refuses_to_start_with_no_password_and_no_optin(make_client):
+    """Fail closed: a blank DASH_PASSWORD must not silently publish
+    everyone's location data to the internet."""
+    import pytest
+    with pytest.raises(RuntimeError, match="DASH_PASSWORD"):
+        make_client()
+
+
+def test_password_change_invalidates_existing_sessions(make_client, tmp_path):
+    """Changing the password is the intuitive response to a stolen phone;
+    it has to actually revoke access."""
+    client = make_client(DASH_PASSWORD="old-pw", SESSION_SECRET="fixed")
+    assert client.post("/login", data={"password": "old-pw"},
+                       follow_redirects=False).status_code == 303
+    cookie = client.cookies.get("tracker_session")
+    assert client.get("/api/devices").status_code == 200
+
+    # Same signing secret, new password: the old cookie must stop working.
+    rotated = make_client(DASH_PASSWORD="new-pw", SESSION_SECRET="fixed")
+    rotated.cookies.set("tracker_session", cookie)
+    assert rotated.get("/api/devices").status_code == 401
+
+
+def test_listener_name_is_sanitized(make_client):
+    """Zone names are rendered into the dashboard; markup must never survive."""
+    client = make_client(**PW)
+    body = {"listener": '<img src=x onerror="alert(1)">',
+            "tags": [{"mac": "C6:8C:B5:57:0E:16", "rssi": -60}]}
+    assert client.post("/api/sighting", json=body,
+                       headers={"X-Token": "test-token"}).status_code == 200
+    client.post("/login", data={"password": "hunter2"})
+    stored = client.get("/api/devices").json()[0]["listener"]
+    for ch in "<>\"'=":
+        assert ch not in stored
 
 
 def test_pwa_assets_are_public(make_client):

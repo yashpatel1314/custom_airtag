@@ -95,3 +95,24 @@ def test_login_page_renders_form():
 def test_login_page_shows_error_when_given():
     assert "Incorrect password." in auth.login_page_html("Incorrect password.")
     assert "Incorrect password." not in auth.login_page_html()
+
+
+def test_password_ok_handles_non_ascii(monkeypatch):
+    """compare_digest raises TypeError on non-ASCII str; a password with an
+    accent must work, and a non-ASCII guess must be rejected, not crash."""
+    monkeypatch.setenv("DASH_PASSWORD", "pässwörd")
+    assert auth.password_ok("pässwörd")
+    assert not auth.password_ok("wrong")
+
+    monkeypatch.setenv("DASH_PASSWORD", "ascii-only")
+    assert not auth.password_ok("gu€ss")
+
+
+def test_signing_key_bound_to_password(monkeypatch):
+    secret = b"k" * 32
+    monkeypatch.setenv("DASH_PASSWORD", "one")
+    first = auth.signing_key(secret)
+    monkeypatch.setenv("DASH_PASSWORD", "two")
+    assert auth.signing_key(secret) != first
+    monkeypatch.setenv("DASH_PASSWORD", "one")
+    assert auth.signing_key(secret) == first

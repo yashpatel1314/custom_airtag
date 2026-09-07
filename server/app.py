@@ -6,6 +6,7 @@ Everything lives in one process; the DB is a single file (tracker.db).
 """
 
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -17,14 +18,28 @@ from fastapi.staticfiles import StaticFiles
 
 import auth
 
+# Zone/listener names come from listener nodes and are rendered in the
+# dashboard; anything outside this class is stripped on the way in.
+UNSAFE_NAME = re.compile(r"[^A-Za-z0-9 _-]")
+
 API_TOKEN = os.environ.get("API_TOKEN", "change-me-long-random-string")
 DB_PATH = os.environ.get("DB_PATH", str(Path(__file__).parent / "tracker.db"))
 STATIC_DIR = Path(__file__).parent / "static"
 
 # Dashboard session signing key, and whether cookies require HTTPS.
 # COOKIE_SECURE=0 is only for local http testing.
-SESSION_SECRET = auth.load_secret(DB_PATH)
+SESSION_KEY = auth.signing_key(auth.load_secret(DB_PATH))
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1") != "0"
+
+# Fail closed. Without a password every route below is world-readable, and
+# on a public host that silently publishes the owner's location history.
+# Running open has to be a deliberate choice, not a blank line in an env file.
+if not auth.enabled() and os.environ.get("ALLOW_OPEN_DASHBOARD") != "1":
+    raise RuntimeError(
+        "DASH_PASSWORD is not set, so anyone who can reach this server could "
+        "read your tags' locations. Set DASH_PASSWORD, or set "
+        "ALLOW_OPEN_DASHBOARD=1 to run without one (localhost only)."
+    )
 
 import json
 
@@ -75,7 +90,7 @@ def require_session(request: Request):
     if not auth.enabled():
         return
     token = request.cookies.get(auth.COOKIE_NAME, "")
-    if not auth.valid_token(SESSION_SECRET, token):
+    if not auth.valid_token(SESSION_KEY, token):
         raise HTTPException(401, "login required")
 
 
@@ -120,7 +135,9 @@ async def sighting(req: Request, x_token: str = Header(default="")):
     if x_token != API_TOKEN:
         raise HTTPException(401, "bad token")
     body = await req.json()
-    listener = str(body.get("listener", "?"))[:64]
+    # Zone names are rendered into the dashboard, so keep them to plain
+    # label characters — markup must never reach the page from a listener.
+    listener = UNSAFE_NAME.sub("", str(body.get("listener", "")))[:64] or "unknown"
     lat, lon = body.get("lat"), body.get("lon")
     # No explicit position? Fall back to this zone's landmark coordinates.
     if (lat is None or lon is None) and listener.lower() in LANDMARKS:
@@ -185,7 +202,7 @@ def history(device: str, hours: float = 24):
 @app.get("/")
 def index(request: Request):
     if auth.enabled() and not auth.valid_token(
-            SESSION_SECRET, request.cookies.get(auth.COOKIE_NAME, "")):
+            SESSION_KEY, request.cookies.get(auth.COOKIE_NAME, "")):
         return RedirectResponse("/login", status_code=302)
     return FileResponse(STATIC_DIR / "index.html")
 
@@ -228,7 +245,7 @@ async def login(request: Request):
                             status_code=401)
     expiry = int(time.time()) + auth.SESSION_SECONDS
     resp = RedirectResponse("/", status_code=303)
-    resp.set_cookie(auth.COOKIE_NAME, auth.make_token(SESSION_SECRET, expiry),
+    resp.set_cookie(auth.COOKIE_NAME, auth.make_token(SESSION_KEY, expiry),
                     max_age=auth.SESSION_SECONDS, httponly=True,
                     secure=COOKIE_SECURE, samesite="lax")
     return resp

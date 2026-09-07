@@ -53,9 +53,21 @@ def enabled() -> bool:
 
 
 def password_ok(supplied) -> bool:
+    # Compare as bytes: hmac.compare_digest raises TypeError on str inputs
+    # containing non-ASCII, which would 500 on an accented password.
     if not isinstance(supplied, str) or not supplied:
         return False
-    return hmac.compare_digest(supplied, password())
+    return hmac.compare_digest(supplied.encode("utf-8"),
+                               password().encode("utf-8"))
+
+
+def signing_key(secret: bytes) -> bytes:
+    """Session signing key, derived from the stored secret *and* the current
+    password. Binding the two means changing DASH_PASSWORD immediately
+    invalidates every outstanding session — which is what someone expects
+    when they change the password after losing a device."""
+    return hmac.new(secret, password().encode("utf-8"),
+                    hashlib.sha256).digest()
 
 
 def load_secret(db_path: str) -> bytes:

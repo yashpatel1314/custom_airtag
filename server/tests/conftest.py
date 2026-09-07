@@ -22,7 +22,8 @@ def make_client(tmp_path, monkeypatch):
         monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
         monkeypatch.setenv("API_TOKEN", "test-token")
         monkeypatch.setenv("COOKIE_SECURE", "0")  # TestClient speaks http
-        for key in ("DASH_PASSWORD", "SESSION_SECRET"):
+        for key in ("DASH_PASSWORD", "SESSION_SECRET",
+                    "ALLOW_OPEN_DASHBOARD"):
             monkeypatch.delenv(key, raising=False)
         for key, value in env.items():
             monkeypatch.setenv(key, value)

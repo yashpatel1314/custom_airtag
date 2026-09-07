@@ -126,6 +126,12 @@
 </div>
 
 <script>
+// Defence in depth for values that reach innerHTML. Zone names are already
+// sanitised server-side, but nothing rendered from the API should be able
+// to introduce markup.
+const ESCAPES = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"};
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ESCAPES[c]);
+
 // Session can expire while the page is open (or while it sits in the iOS
 // app switcher for weeks). Bounce to the login page instead of rendering
 // an error. No-op when the server has no password configured.
@@ -200,7 +206,7 @@ async function refresh() {
       d.last_fix ? [d.last_fix.lat, d.last_fix.lon] : null;
     const fresh = Date.now() / 1000 - d.ts < STALE_S;
     const batt = battPct(d.batt_mv), sig = csqPct(d.csq) ?? rssiPct(d.rssi);
-    const zone = d.listener ? `at ${d.listener}` : null;
+    const zone = d.listener ? `at ${esc(d.listener)}` : null;
     // Battery: prefer a precise % (our BLE firmware or GPS mV), else the
     // coarse 4-level label, else unknown.
     const BATT_LABEL = { full: "Full", medium: "Med", low: "Low", critical: "Crit" };
@@ -216,7 +222,7 @@ async function refresh() {
     el.innerHTML = `
       <div class="card-head">
         <div class="swatch" style="background:${color}"></div>
-        <div class="name">${d.device}</div>
+        <div class="name">${esc(d.device)}</div>
         <div class="dot" title="${fresh ? "reporting" : "stale"}"
              style="background:${fresh ? "var(--good)" : "var(--muted)"}"></div>
       </div>
@@ -224,7 +230,7 @@ async function refresh() {
         <div class="tile"><div class="v" style="${battLow ? "color:var(--critical)" : ""}">${battText}</div><div class="k">battery</div></div>
         <div class="tile"><div class="v">${sig ?? "–"}%</div><div class="k">signal</div></div>
         ${d.listener
-          ? `<div class="tile"><div class="v" style="font-size:14px">${d.listener}</div><div class="k">zone</div></div>`
+          ? `<div class="tile"><div class="v" style="font-size:14px">${esc(d.listener)}</div><div class="k">zone</div></div>`
           : `<div class="tile"><div class="v">${d.fix ? (d.sats ?? "–") : "no fix"}</div><div class="k">${d.fix ? "sats" : "gps"}</div></div>`}
       </div>
       <div class="foot">${fresh ? "" : "⚠ "}${zone ? zone + " · " : ""}seen ${ago(d.ts)}${d.listener ? "" : (d.fix ? "" : d.last_fix ? " · showing last fix (" + ago(d.last_fix.ts) + ")" : " · no position yet")}</div>
@@ -248,7 +254,7 @@ async function refresh() {
     const ly = layers[d.device];
     ly.marker.setLatLng(pos);
     ly.marker.bindTooltip(
-      `<b>${d.device}</b><br>${batt ?? "–"}% batt · seen ${ago(d.ts)}`);
+      `<b>${esc(d.device)}</b><br>${batt ?? "–"}% batt · seen ${ago(d.ts)}`);
 
     if (d.device === selected) {
       const hist = await api(
