@@ -36,8 +36,21 @@
     width: 320px; min-width: 320px; padding: 16px; overflow-y: auto;
     border-right: 1px solid var(--hairline); display: flex;
     flex-direction: column; gap: 12px;
+    transition: width .22s ease, min-width .22s ease, padding .22s ease;
+  }
+  body.collapsed #sidebar {
+    width: 0; min-width: 0; padding: 0; border-right: 0; overflow: hidden;
   }
   #map { flex: 1; background: var(--surface); }
+  #toggle {
+    position: fixed; top: 16px; left: 320px; transform: translateX(-50%);
+    z-index: 20; width: 26px; height: 26px; padding: 0; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: var(--ink-2); background: var(--surface);
+    border: 1px solid var(--hairline); border-radius: 50%; cursor: pointer;
+    transition: left .22s ease;
+  }
+  body.collapsed #toggle { left: 0; }
   h1 { font-size: 16px; margin: 0; font-weight: 650; }
   .sub { color: var(--muted); font-size: 12px; }
   .filters { display: flex; gap: 6px; }
@@ -112,6 +125,7 @@
   </div>
   <div id="cards"><div class="empty">No pings yet</div></div>
 </div>
+<button id="toggle" aria-label="Toggle sidebar">‹</button>
 <div id="map"></div>
 
 <div id="finder">
@@ -144,6 +158,23 @@ async function api(path) {
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
+
+// Sidebar collapse: remembered per device so the choice sticks across
+// reloads, but never load-bearing if storage is unavailable.
+const toggleBtn = document.getElementById("toggle");
+function setCollapsed(on) {
+  document.body.classList.toggle("collapsed", on);
+  toggleBtn.textContent = on ? "›" : "‹";
+  try { localStorage.setItem("sidebarCollapsed", on ? "1" : "0"); } catch {}
+  // Leaflet caches its container size; without this the map stays the old
+  // size (or blank) until the window is manually resized.
+  setTimeout(() => map.invalidateSize(), 230);
+}
+toggleBtn.addEventListener("click", () =>
+  setCollapsed(!document.body.classList.contains("collapsed")));
+try {
+  if (localStorage.getItem("sidebarCollapsed") === "1") setCollapsed(true);
+} catch {}
 
 const LIGHT = matchMedia("(prefers-color-scheme: light)").matches;
 // Fixed categorical order (light/dark variants) — assigned per device, never cycled.
