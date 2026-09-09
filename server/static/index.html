@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tracker</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#12212e">
@@ -51,6 +51,47 @@
     transition: left .22s ease;
   }
   body.collapsed #toggle { left: 0; }
+  /* Narrow viewports (phones): a 320px sidebar can't share width with the
+     map without squeezing it to a sliver, so below this breakpoint the
+     sidebar stops being a flex sibling and becomes a full-height overlay
+     drawer that floats on top of a full-bleed map instead. The toggle
+     moves to a fixed top-right corner (clear of Leaflet's top-left zoom
+     control) instead of tracking the sidebar's edge, and everything gets
+     safe-area padding so nothing renders under the notch/status bar. */
+  @media (max-width: 700px) {
+    #sidebar {
+      position: fixed; top: 0; left: 0; height: 100%;
+      width: min(320px, 86vw); min-width: 0;
+      z-index: 1100; border-right: 0;
+      background: var(--page);
+      box-shadow: 2px 0 24px rgba(0, 0, 0, 0.3);
+      padding: 16px; /* plain-px fallback for browsers without env() */
+      padding: calc(16px + env(safe-area-inset-top, 0px)) 16px
+               calc(16px + env(safe-area-inset-bottom, 0px))
+               calc(16px + env(safe-area-inset-left, 0px));
+      transform: translateX(0);
+      transition: transform .22s ease;
+    }
+    body.collapsed #sidebar {
+      width: min(320px, 86vw); min-width: 0; border-right: 0;
+      padding: 16px;
+      padding: calc(16px + env(safe-area-inset-top, 0px)) 16px
+               calc(16px + env(safe-area-inset-bottom, 0px))
+               calc(16px + env(safe-area-inset-left, 0px));
+      transform: translateX(-100%);
+    }
+    #toggle {
+      left: auto; transform: none; z-index: 1200;
+      top: 16px; right: 16px; /* plain-px fallback */
+      top: calc(16px + env(safe-area-inset-top, 0px));
+      right: calc(16px + env(safe-area-inset-right, 0px));
+    }
+    body.collapsed #toggle { left: auto; }
+    /* Leaflet's own zoom control (top-left of #map) stays clear of the
+       status bar/notch too; the map itself stays edge-to-edge, only the
+       floating control shifts down. */
+    .leaflet-top { top: env(safe-area-inset-top, 0px); }
+  }
   h1 { font-size: 16px; margin: 0; font-weight: 650; }
   .sub { color: var(--muted); font-size: 12px; }
   .filters { display: flex; gap: 6px; }
@@ -162,9 +203,13 @@ if ("serviceWorker" in navigator) {
 // Sidebar collapse: remembered per device so the choice sticks across
 // reloads, but never load-bearing if storage is unavailable.
 const toggleBtn = document.getElementById("toggle");
-function setCollapsed(on) {
+const MOBILE_MQ = matchMedia("(max-width: 700px)");
+function applyCollapsed(on) {
   document.body.classList.toggle("collapsed", on);
   toggleBtn.textContent = on ? "›" : "‹";
+}
+function setCollapsed(on) {
+  applyCollapsed(on);
   try { localStorage.setItem("sidebarCollapsed", on ? "1" : "0"); } catch {}
   // Leaflet caches its container size; without this the map stays the old
   // size (or blank) until the window is manually resized.
@@ -172,9 +217,18 @@ function setCollapsed(on) {
 }
 toggleBtn.addEventListener("click", () =>
   setCollapsed(!document.body.classList.contains("collapsed")));
-try {
-  if (localStorage.getItem("sidebarCollapsed") === "1") setCollapsed(true);
-} catch {}
+
+// Initial state: an explicit stored choice (from either a desktop or a
+// mobile visit) always wins, verbatim. With nothing stored yet, default
+// to collapsed on a narrow/phone viewport -- a 320px sidebar has nowhere
+// to go but on top of the map there -- and open otherwise. That default
+// is only ever applied, never saved, so it can't stick around and fight
+// whatever the user (or the other kind of device) picks later.
+let storedCollapsed = null;
+try { storedCollapsed = localStorage.getItem("sidebarCollapsed"); } catch {}
+if (storedCollapsed === "1") applyCollapsed(true);
+else if (storedCollapsed === "0") applyCollapsed(false);
+else applyCollapsed(MOBILE_MQ.matches);
 
 const LIGHT = matchMedia("(prefers-color-scheme: light)").matches;
 // Fixed categorical order (light/dark variants) — assigned per device, never cycled.
