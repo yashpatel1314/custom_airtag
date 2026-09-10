@@ -1,20 +1,32 @@
 [Unit]
 # The Pi has its own Bluetooth radio, so it is both the server and a
 # listener node. On a cloud VM this unit is not used.
+#
+# This is a systemd USER unit (systemctl --user), matching how the Pi's
+# containerized server (tracker.container, in this same directory) runs —
+# no dedicated system user or root privileges needed. Install with:
+#   mkdir -p ~/.config/systemd/user
+#   cp tracker-listener.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tracker-listener.service
+#   loginctl enable-linger $USER   # survive logout/reboot with nobody logged in
 Description=custom_airtag BLE listener
-After=network.target bluetooth.target tracker.service
-Requires=bluetooth.target
+After=tracker.service
+Wants=tracker.service
 
 [Service]
-User=tracker
-Group=tracker
-WorkingDirectory=/opt/custom_airtag/server
-EnvironmentFile=/etc/tracker.env
+# Without this, Python buffers stdout when it isn't attached to a
+# terminal, so the periodic "heard N, ours: [...]" lines never show up in
+# `systemctl status` in real time — not a functional bug, just an
+# invisible one that makes debugging confusing.
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=%h/custom_airtag/server
+EnvironmentFile=%h/tracker.env
 # Posts to the local server directly; no TLS hop needed on the same box.
-ExecStart=/opt/custom_airtag/.venv/bin/python listener.py \
+ExecStart=%h/custom_airtag/.venv/bin/python listener.py \
   --server http://127.0.0.1:8000 --listener home
 Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

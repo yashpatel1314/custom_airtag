@@ -1,0 +1,35 @@
+# Podman Quadlet unit for the Pi's containerized server. Requires Podman
+# 4.4+ (systemd auto-generates a unit from this file — no `podman generate
+# systemd` or manual unit-writing needed).
+#
+# Install:
+#   podman build -t tracker ~/custom_airtag/server
+#   mkdir -p ~/tracker-data ~/.config/containers/systemd
+#   cp tracker.container ~/.config/containers/systemd/
+#   systemctl --user daemon-reload
+#   systemctl --user start tracker.service
+#   loginctl enable-linger $USER   # survive logout/reboot with nobody logged in
+#
+# Quadlet units can't be `systemctl --user enable`d directly (it errors
+# with "is transient or generated") — the [Install] section below is
+# applied automatically on daemon-reload instead.
+
+[Unit]
+Description=custom_airtag tracker server
+
+[Container]
+Image=localhost/tracker:latest
+ContainerName=tracker
+PublishPort=127.0.0.1:8000:8000
+EnvironmentFile=%h/tracker.env
+# Path *inside* the container, pointing at the mounted volume below —
+# deliberately different from the DB_PATH you set in tracker.env for the
+# listener, which needs the path on the host filesystem instead.
+Environment=DB_PATH=/data/tracker.db
+Volume=%h/tracker-data:/data:Z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
