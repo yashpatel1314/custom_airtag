@@ -51,7 +51,7 @@ def test_sighting_triggers_pruning(make_client):
 
     app._last_prune = 0.0   # force the once-an-hour guard to fire
     body = {"listener": "home",
-            "tags": [{"mac": "C6:8C:B5:57:0E:16", "rssi": -60}]}
+            "tags": [{"mac": "D5:5A:2C:64:39:7A", "rssi": -60}]}
     client.post("/api/sighting", json=body, headers={"X-Token": "test-token"})
     # Old row pruned, the new sighting kept.
     assert count(client) == 1

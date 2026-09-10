@@ -54,7 +54,7 @@ def test_sighting_uses_token_not_session(make_client):
     """Listeners must keep working with no session at all."""
     client = make_client(**PW)
     body = {"listener": "home",
-            "tags": [{"mac": "C6:8C:B5:57:0E:16", "rssi": -60}]}
+            "tags": [{"mac": "D5:5A:2C:64:39:7A", "rssi": -60}]}
     r = client.post("/api/sighting", json=body,
                     headers={"X-Token": "test-token"})
     assert r.status_code == 200
@@ -103,7 +103,7 @@ def test_listener_name_is_sanitized(make_client):
     """Zone names are rendered into the dashboard; markup must never survive."""
     client = make_client(**PW)
     body = {"listener": '<img src=x onerror="alert(1)">',
-            "tags": [{"mac": "C6:8C:B5:57:0E:16", "rssi": -60}]}
+            "tags": [{"mac": "D5:5A:2C:64:39:7A", "rssi": -60}]}
     assert client.post("/api/sighting", json=body,
                        headers={"X-Token": "test-token"}).status_code == 200
     client.post("/login", data={"password": "hunter2"})
